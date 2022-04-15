@@ -6,8 +6,8 @@ help: ## Show the help
 it: build build-tests ## Initialize the development environment
 
 GOLANG_VERSION=1.18
-DOCKER_REPOSITORY=gotenberg
-GOTENBERG_VERSION=snapshot
+DOCKER_REPOSITORY=theun
+GOTENBERG_VERSION=7
 GOTENBERG_USER_GID=1001
 GOTENBERG_USER_UID=1001
 NOTO_COLOR_EMOJI_VERSION=v2.034 # See https://github.com/googlefonts/noto-emoji/releases.
@@ -27,7 +27,7 @@ build: ## Build the Gotenberg's Docker image
 	-f build/Dockerfile .
 
 GOTENBERG_GRACEFUL_SHUTDOWN_DURATION=30s
-API_PORT=3000
+API_PORT=3003
 API_PORT_FROM_ENV=
 API_TIMEOUT=30s
 API_ROOT_PATH=/

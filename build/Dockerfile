@@ -47,6 +47,7 @@ COPY build/pdftk.sh /usr/bin/pdftk
 
 # Setup the Docker image.
 ARG GOTENBERG_API_PORT
+ARG GOTENBERG_API_TIMEOUT
 ARG GOTENBERG_USER_GID
 ARG GOTENBERG_USER_UID
 ARG NOTO_COLOR_EMOJI_VERSION
@@ -169,4 +170,4 @@ WORKDIR /home/gotenberg
 EXPOSE ${GOTENBERG_API_PORT}
 
 ENTRYPOINT [ "/usr/bin/tini", "--" ]
-CMD [ "gotenberg", "--api-port=${GOTENBERG_API_PORT}" ]
+CMD [ "gotenberg", "--api-port=${GOTENBERG_API_PORT}", "--api-timeout=${GOTENBERG_API_TIMEOUT}" ]

@@ -13,6 +13,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"go.uber.org/zap"
+
+	"github.com/gotenberg/gotenberg/v8/pkg/gotenberg"
 )
 
 func TestParseError(t *testing.T) {
@@ -27,14 +29,29 @@ func TestParseError(t *testing.T) {
 			expectMessage: http.StatusText(http.StatusInternalServerError),
 		},
 		{
-			err:           context.DeadlineExceeded,
-			expectStatus:  http.StatusServiceUnavailable,
-			expectMessage: http.StatusText(http.StatusServiceUnavailable),
+			err:           gotenberg.ErrFiltered,
+			expectStatus:  http.StatusForbidden,
+			expectMessage: http.StatusText(http.StatusForbidden),
+		},
+		{
+			err:           gotenberg.ErrMaximumQueueSizeExceeded,
+			expectStatus:  http.StatusTooManyRequests,
+			expectMessage: http.StatusText(http.StatusTooManyRequests),
+		},
+		{
+			err:           gotenberg.ErrPdfFormatNotSupported,
+			expectStatus:  http.StatusBadRequest,
+			expectMessage: "At least one PDF engine cannot process the requested PDF format, while others may have failed to convert due to different issues",
+		},
+		{
+			err:           gotenberg.ErrPdfEngineMetadataValueNotSupported,
+			expectStatus:  http.StatusBadRequest,
+			expectMessage: "At least one PDF engine cannot process the requested metadata, while others may have failed to convert due to different issues",
 		},
 		{
 			err: WrapError(
 				errors.New("foo"),
-				NewSentinelHTTPError(http.StatusBadRequest, "foo"),
+				NewSentinelHttpError(http.StatusBadRequest, "foo"),
 			),
 			expectStatus:  http.StatusBadRequest,
 			expectMessage: "foo",
@@ -71,7 +88,7 @@ func TestHttpErrorHandler(t *testing.T) {
 		{
 			err: WrapError(
 				errors.New("foo"),
-				NewSentinelHTTPError(http.StatusBadRequest, "foo"),
+				NewSentinelHttpError(http.StatusBadRequest, "foo"),
 			),
 			expectStatus:  http.StatusBadRequest,
 			expectMessage: "foo",
@@ -122,7 +139,6 @@ func TestLatencyMiddleware(t *testing.T) {
 			return nil
 		},
 	)(c)
-
 	if err != nil {
 		t.Fatalf("expected no error but got: %v", err)
 	}
@@ -150,7 +166,6 @@ func TestRootPathMiddleware(t *testing.T) {
 			return nil
 		},
 	)(c)
-
 	if err != nil {
 		t.Fatalf("expected no error but got: %v", err)
 	}
@@ -191,7 +206,6 @@ func TestTraceMiddleware(t *testing.T) {
 				return nil
 			},
 		)(c)
-
 		if err != nil {
 			t.Fatalf("test %d: expected no error but got: %v", i, err)
 		}
@@ -219,6 +233,56 @@ func TestTraceMiddleware(t *testing.T) {
 		if tc.trace == "" && responseTrace == tc.trace {
 			t.Errorf("test %d: expected header trace different from '%s' but got '%s'", i, tc.trace, responseTrace)
 		}
+	}
+}
+
+func TestBasicAuthMiddleware(t *testing.T) {
+	for _, tc := range []struct {
+		scenario    string
+		request     *http.Request
+		username    string
+		password    string
+		expectError bool
+	}{
+		{
+			scenario: "invalid basic auth",
+			request: func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "/", nil)
+				req.SetBasicAuth("invalid", "invalid")
+				return req
+			}(),
+			username:    "foo",
+			password:    "bar",
+			expectError: true,
+		},
+		{
+			scenario: "valid basic auth",
+			request: func() *http.Request {
+				req := httptest.NewRequest(http.MethodGet, "/", nil)
+				req.SetBasicAuth("foo", "bar")
+				return req
+			}(),
+			username:    "foo",
+			password:    "bar",
+			expectError: false,
+		},
+	} {
+		t.Run(tc.scenario, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			srv := echo.New()
+			srv.HideBanner = true
+			srv.HidePort = true
+			c := srv.NewContext(tc.request, recorder)
+			err := basicAuthMiddleware(tc.username, tc.password)(func(c echo.Context) error {
+				return nil
+			})(c)
+			if !tc.expectError && err != nil {
+				t.Fatalf("expected no error but got: %v", err)
+			}
+			if tc.expectError && err == nil {
+				t.Fatal("expected error but got none")
+			}
+		})
 	}
 }
 
@@ -271,7 +335,6 @@ func TestLoggerMiddleware(t *testing.T) {
 		}
 
 		err := loggerMiddleware(zap.NewNop(), disableLoggingForPaths)(tc.next)(c)
-
 		if err != nil {
 			t.Errorf("test %d: expected no error but got: %v", i, err)
 		}
@@ -321,6 +384,15 @@ func TestContextMiddleware(t *testing.T) {
 				}
 			}(),
 			expectStatus: http.StatusNoContent,
+		},
+		{
+			request: buildMultipartFormDataRequest(),
+			next: func() echo.HandlerFunc {
+				return func(c echo.Context) error {
+					return ErrNoOutputFile
+				}
+			}(),
+			expectStatus: http.StatusOK,
 		},
 		{
 			request: buildMultipartFormDataRequest(),
@@ -389,7 +461,7 @@ func TestContextMiddleware(t *testing.T) {
 		c.Set("trace", "foo")
 		c.Set("startTime", time.Now())
 
-		err := contextMiddleware(time.Duration(10) * time.Second)(tc.next)(c)
+		err := contextMiddleware(gotenberg.NewFileSystem(), time.Duration(10)*time.Second)(tc.next)(c)
 
 		if tc.expectErr && err == nil {
 			t.Errorf("test %d: expected error but got: %v", i, err)

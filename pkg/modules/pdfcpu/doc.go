@@ -1,4 +1,7 @@
-// Package pdfcpu provides a module which wraps the
-// https://github.com/pdfcpu/pdfcpu library and implements the
-// gotenberg.PDFEngine interface.
+// Package pdfcpu provides an implementation of the gotenberg.PdfEngine
+// interface using the pdfcpu library. This package allows for:
+//
+// 1. The merging of PDF files.
+//
+// See: https://github.com/pdfcpu/pdfcpu.
 package pdfcpu

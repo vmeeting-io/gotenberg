@@ -2,8 +2,9 @@ package api
 
 import (
 	"fmt"
-	"io/ioutil"
+	"math"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -11,156 +12,243 @@ import (
 	"time"
 
 	"go.uber.org/multierr"
+
+	"github.com/gotenberg/gotenberg/v8/pkg/gotenberg"
 )
 
 // FormData is a helper for validating and hydrating values from a
 // "multipart/form-data" request.
 //
-//  form := ctx.FormData()
+//	form := ctx.FormData()
 type FormData struct {
 	values map[string][]string
 	files  map[string]string
 	errors error
 }
 
-// Validate returns nil or an error related to the FormData values, with a
-// SentinelHTTPError (status code 400, errors' details as message) wrapped
+// Validate returns nil or an error related to the [FormData] values, with a
+// [SentinelHttpError] (status code 400, errors' details as message) wrapped
 // inside.
 //
-//  var foo string
+//	var foo string
 //
-//  err := ctx.FormData().
-//     MandatoryString("foo", &foo, "bar").
-//     Validate()
-func (form FormData) Validate() error {
+//	err := ctx.FormData().
+//	   MandatoryString("foo", &foo, "bar").
+//	   Validate()
+func (form *FormData) Validate() error {
 	if form.errors == nil {
 		return nil
 	}
 
 	return WrapError(
 		form.errors,
-		NewSentinelHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid form data: %s", form.errors)),
+		NewSentinelHttpError(http.StatusBadRequest, fmt.Sprintf("Invalid form data: %s", form.errors)),
 	)
 }
 
-// String binds a form data value to a string variable.
+// String binds a form field to a string variable.
 //
-//  var foo string
+//	var foo string
 //
-//  ctx.FormData().String("foo", &foo, "bar")
+//	ctx.FormData().String("foo", &foo, "bar")
 func (form *FormData) String(key string, target *string, defaultValue string) *FormData {
 	return form.mustValue(key, target, defaultValue)
 }
 
-// MandatoryString binds a form data value to a string variable. It populates
+// MandatoryString binds a form field to a string variable. It populates
 // an error if the value is empty or the "key" does not exist.
 //
-//  var foo string
+//	var foo string
 //
-//  ctx.FormData().MandatoryString("foo", &foo)
+//	ctx.FormData().MandatoryString("foo", &foo)
 func (form *FormData) MandatoryString(key string, target *string) *FormData {
-	return form.mustMandatoryValue(key, target)
+	return form.mustMandatoryField(key, target)
 }
 
-// Bool binds a form data value to a bool variable. It populates an error if
+// Bool binds a form field to a bool variable. It populates an error if
 // the value is not bool.
 //
-//  var foo bool
+//	var foo bool
 //
-//  ctx.FormData().Bool("foo", &foo, true)
+//	ctx.FormData().Bool("foo", &foo, true)
 func (form *FormData) Bool(key string, target *bool, defaultValue bool) *FormData {
 	return form.mustValue(key, target, defaultValue)
 }
 
-// MandatoryBool binds a form data value to a bool variable. It populates an
+// MandatoryBool binds a form field to a bool variable. It populates an
 // error if the value is not bool, is empty, or the "key" does not exist.
 //
-//  var foo bool
+//	var foo bool
 //
-//  ctx.FormData().MandatoryBool("foo", &foo)
+//	ctx.FormData().MandatoryBool("foo", &foo)
 func (form *FormData) MandatoryBool(key string, target *bool) *FormData {
-	return form.mustMandatoryValue(key, target)
+	return form.mustMandatoryField(key, target)
 }
 
-// Int binds a form data value to an int variable. It populates an error if the
+// Int binds a form field to an int variable. It populates an error if the
 // value is not int.
 //
-//  var foo int
+//	var foo int
 //
-//  ctx.FormData().Int("foo", &foo, 2)
+//	ctx.FormData().Int("foo", &foo, 2)
 func (form *FormData) Int(key string, target *int, defaultValue int) *FormData {
 	return form.mustValue(key, target, defaultValue)
 }
 
-// MandatoryInt binds a form data value to an int variable. It populates an
+// MandatoryInt binds a form field to an int variable. It populates an
 // error if the value is not int, is empty, or the "key" does not exist.
 //
-//  var foo int
+//	var foo int
 //
-//  ctx.FormData().MandatoryInt("foo", &foo)
+//	ctx.FormData().MandatoryInt("foo", &foo)
 func (form *FormData) MandatoryInt(key string, target *int) *FormData {
-	return form.mustMandatoryValue(key, target)
+	return form.mustMandatoryField(key, target)
 }
 
-// Float64 binds a form data value to a float64 variable. It populates an error
+// Float64 binds a form field to a float64 variable. It populates an error
 // if the value is not float64.
 //
-//  var foo float64
+//	var foo float64
 //
-//  ctx.FormData().Float64("foo", &foo, 2.0)
+//	ctx.FormData().Float64("foo", &foo, 2.0)
 func (form *FormData) Float64(key string, target *float64, defaultValue float64) *FormData {
 	return form.mustValue(key, target, defaultValue)
 }
 
-// MandatoryFloat64 binds a form data value to a float64 variable. It populates
+// MandatoryFloat64 binds a form field to a float64 variable. It populates
 // an error if the is not float64, is empty, or the "key" does not exist.
 //
-//  var foo float64
+//	var foo float64
 //
-//  ctx.FormData().MandatoryFloat64("foo", &foo)
+//	ctx.FormData().MandatoryFloat64("foo", &foo)
 func (form *FormData) MandatoryFloat64(key string, target *float64) *FormData {
-	return form.mustMandatoryValue(key, target)
+	return form.mustMandatoryField(key, target)
 }
 
-// Duration binds a form data value to a time.Duration variable. It populates
-// an error if the form data value is not time.Duration.
+// Duration binds a form field to a time.Duration variable. It populates
+// an error if the form field is not time.Duration.
 //
-//  var foo time.Duration
+//	var foo time.Duration
 //
-//  ctx.FormData().Duration("foo", &foo, time.Duration(2) * time.Second)
+//	ctx.FormData().Duration("foo", &foo, time.Duration(2) * time.Second)
 func (form *FormData) Duration(key string, target *time.Duration, defaultValue time.Duration) *FormData {
 	return form.mustValue(key, target, defaultValue)
 }
 
-// MandatoryDuration binds a form data value to a time.Duration variable. It
+// MandatoryDuration binds a form field to a time.Duration variable. It
 // populates an error if the value is not time.Duration, is empty, or the "key"
 // does not exist.
 //
-//  var foo time.Duration
+//	var foo time.Duration
 //
-//  ctx.FormData().MandatoryDuration("foo", &foo)
+//	ctx.FormData().MandatoryDuration("foo", &foo)
 func (form *FormData) MandatoryDuration(key string, target *time.Duration) *FormData {
-	return form.mustMandatoryValue(key, target)
+	return form.mustMandatoryField(key, target)
 }
 
-// Custom helps to define a custom binding function for a form data value.
+// Inches binds a form field to a float64 variable. It populates an error
+// if the value cannot be computed back to inches.
 //
-//  var foo map[string]string
+//	var foo float64
 //
-//  ctx.FormData().Custom("foo", func(value string) error {
-//    if value == "" {
-//      foo = "bar"
+//	ctx.FormData().Inches("foo", &foo, 2.0)
+func (form *FormData) Inches(key string, target *float64, defaultValue float64) *FormData {
+	form.inches(key, target)
+	if *target == -math.MaxFloat64 {
+		*target = defaultValue
+	}
+	return form
+}
+
+// MandatoryInches binds a form field to a float64 variable. It populates
+// an error if the value cannot be computed back to inches, is empty, or the
+// "key" does not exist.
 //
-//      return nil
-//    }
+//	var foo float64
 //
-//    err := json.Unmarshal([]byte(value), &foo)
-//    if err != nil {
-//      return fmt.Errorf("unmarshal foo: %w", err)
-//    }
+//	ctx.FormData().MandatoryInches("foo", &foo)
+func (form *FormData) MandatoryInches(key string, target *float64) *FormData {
+	val, ok := form.values[key]
+	if !ok || val[0] == "" {
+		form.append(
+			fmt.Errorf("form field '%s' is required", key),
+		)
+		return form
+	}
+	return form.inches(key, target)
+}
+
+// inches tries to compute a string value to inches.
+func (form *FormData) inches(key string, target *float64) *FormData {
+	var value string
+	form.mustValue(key, &value, "")
+
+	if value == "" {
+		*target = -math.MaxFloat64
+		return form
+	}
+
+	for _, unit := range []string{"pt", "px", "in", "mm", "cm", "pc"} {
+		if !strings.HasSuffix(value, unit) {
+			continue
+		}
+
+		val, err := strconv.ParseFloat(strings.TrimSuffix(value, unit), 64)
+		if err != nil {
+			form.append(
+				fmt.Errorf("form field '%s' is invalid (got '%s', resulting to %w)", key, value, err),
+			)
+			return form
+		}
+
+		switch unit {
+		case "pt":
+			*target = val * (1.0 / 72.0)
+		case "px":
+			*target = val * (1.0 / 96.0)
+		case "in":
+			*target = val
+		case "mm":
+			*target = val * (1.0 / 25.4)
+		case "cm":
+			*target = val * (1.0 / 2.54)
+		case "pc":
+			*target = val * (1.0 / 6.0)
+		}
+
+		return form
+	}
+
+	val, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		form.append(
+			fmt.Errorf("form field '%s' is invalid (got '%s', resulting to %w)", key, value, err),
+		)
+		return form
+	}
+
+	*target = val
+	return form
+}
+
+// Custom helps to define a custom binding function for a form field.
 //
-//    return nil
-//  })
+//	var foo map[string]string
+//
+//	ctx.FormData().Custom("foo", func(value string) error {
+//	  if value == "" {
+//	    foo = "bar"
+//
+//	    return nil
+//	  }
+//
+//	  err := json.Unmarshal([]byte(value), &foo)
+//	  if err != nil {
+//	    return fmt.Errorf("unmarshal foo: %w", err)
+//	  }
+//
+//	  return nil
+//	})
 func (form *FormData) Custom(key string, assign func(value string) error) *FormData {
 	var value string
 	form.mustValue(key, &value, "")
@@ -168,30 +256,29 @@ func (form *FormData) Custom(key string, assign func(value string) error) *FormD
 	err := assign(value)
 	if err != nil {
 		form.append(
-			fmt.Errorf("form value '%s' is invalid (got '%s', resulting to %w)", key, value, err),
+			fmt.Errorf("form field '%s' is invalid (got '%s', resulting to %w)", key, value, err),
 		)
 	}
 
 	return form
 }
 
-// MandatoryCustom helps to define a custom binding function for a form data
-// value. It populates an error if the value is empty or the "key" does not
-// exist.
+// MandatoryCustom helps to define a custom binding function for a form field.
+// It populates an error if the value is empty or the "key" does not exist.
 //
-//  var foo map[string]string
+//	var foo map[string]string
 //
-//  ctx.FormData().MandatoryCustom("foo", func(value string) error {
-//    err := json.Unmarshal([]byte(value), &foo)
-//    if err != nil {
-//      return fmt.Errorf("unmarshal foo: %w", err)
-//    }
+//	ctx.FormData().MandatoryCustom("foo", func(value string) error {
+//	  err := json.Unmarshal([]byte(value), &foo)
+//	  if err != nil {
+//	    return fmt.Errorf("unmarshal foo: %w", err)
+//	  }
 //
-//    return nil
-//  })
+//	  return nil
+//	})
 func (form *FormData) MandatoryCustom(key string, assign func(value string) error) *FormData {
 	var value string
-	form.mustMandatoryValue(key, &value)
+	form.mustMandatoryField(key, &value)
 
 	if value == "" {
 		return form
@@ -200,7 +287,7 @@ func (form *FormData) MandatoryCustom(key string, assign func(value string) erro
 	err := assign(value)
 	if err != nil {
 		form.append(
-			fmt.Errorf("form value '%s' is invalid (got '%s', resulting to %w)", key, value, err),
+			fmt.Errorf("form field '%s' is invalid (got '%s', resulting to %w)", key, value, err),
 		)
 	}
 
@@ -209,9 +296,9 @@ func (form *FormData) MandatoryCustom(key string, assign func(value string) erro
 
 // Path binds the absolute path of a form data file to a string variable.
 //
-//  var path string
+//	var path string
 //
-//  ctx.FormData().Path("foo.txt", &path)
+//	ctx.FormData().Path("foo.txt", &path)
 func (form *FormData) Path(filename string, target *string) *FormData {
 	return form.path(filename, target)
 }
@@ -219,18 +306,18 @@ func (form *FormData) Path(filename string, target *string) *FormData {
 // MandatoryPath binds the absolute path ofa  form data file to a string
 // variable. It populates an error if the file does not exist.
 //
-//  var path string
+//	var path string
 //
-//  ctx.FormData().MandatoryPath("foo.txt", &path)
+//	ctx.FormData().MandatoryPath("foo.txt", &path)
 func (form *FormData) MandatoryPath(filename string, target *string) *FormData {
 	return form.mandatoryPath(filename, target)
 }
 
 // Content binds the content of a form data file to a string variable.
 //
-//  var content string
+//	var content string
 //
-//  ctx.FormData().Content("foo.txt", &content, "bar")
+//	ctx.FormData().Content("foo.txt", &content, "bar")
 func (form *FormData) Content(filename string, target *string, defaultValue string) *FormData {
 	var path string
 	form.path(filename, &path)
@@ -247,9 +334,9 @@ func (form *FormData) Content(filename string, target *string, defaultValue stri
 // MandatoryContent binds the content of a form data file to a string variable.
 // It populates an error if the file does not exist.
 //
-//  var content string
+//	var content string
 //
-//  ctx.FormData().MandatoryContent("foo.txt", &content)
+//	ctx.FormData().MandatoryContent("foo.txt", &content)
 func (form *FormData) MandatoryContent(filename string, target *string) *FormData {
 	var path string
 	form.mandatoryPath(filename, &path)
@@ -264,9 +351,9 @@ func (form *FormData) MandatoryContent(filename string, target *string) *FormDat
 // Paths binds the absolute paths of form data files, according to a list of
 // file extensions, to a string slice variable.
 //
-//  var paths []string
+//	var paths []string
 //
-//  ctx.FormData().Paths([]string{".txt"}, &paths)
+//	ctx.FormData().Paths([]string{".txt"}, &paths)
 func (form *FormData) Paths(extensions []string, target *[]string) *FormData {
 	return form.paths(extensions, target)
 }
@@ -275,9 +362,9 @@ func (form *FormData) Paths(extensions []string, target *[]string) *FormData {
 // list of file extensions, to a string slice variable. It populates an error
 // if there is no file for given file extensions.
 //
-//  var paths []string
+//	var paths []string
 //
-//  ctx.FormData().MandatoryPaths([]string{".txt"}, &paths)
+//	ctx.FormData().MandatoryPaths([]string{".txt"}, &paths)
 func (form *FormData) MandatoryPaths(extensions []string, target *[]string) *FormData {
 	form.paths(extensions, target)
 
@@ -305,7 +392,7 @@ func (form *FormData) paths(extensions []string, target *[]string) *FormData {
 	}
 
 	// See https://github.com/gotenberg/gotenberg/issues/139.
-	sort.Strings(*target)
+	sort.Sort(gotenberg.AlphanumericSort(*target))
 
 	return form
 }
@@ -315,7 +402,7 @@ func (form *FormData) append(err error) {
 	form.errors = multierr.Append(form.errors, err)
 }
 
-// mustValue binds the target interface with a form data value. If the value is
+// mustValue binds the target interface with a form field. If the value is
 // empty or the "key" does not exist, it binds the default value. Currently,
 // only the string, bool, int, float64 and time.Duration types are bindable.
 func (form *FormData) mustValue(key string, target interface{}, defaultValue interface{}) *FormData {
@@ -343,16 +430,16 @@ func (form *FormData) mustValue(key string, target interface{}, defaultValue int
 	return form.mustAssign(key, val[0], target)
 }
 
-// mustMandatoryValue binds the target interface with a form data value. It
+// mustMandatoryField binds the target interface with a form field. It
 // populates an error if the value is empty or the "key" does not exist.
 // Currently, only the string, bool, int, float64 and time.Duration types are
 // bindable.
-func (form *FormData) mustMandatoryValue(key string, target interface{}) *FormData {
+func (form *FormData) mustMandatoryField(key string, target interface{}) *FormData {
 	val, ok := form.values[key]
 
 	if !ok || val[0] == "" {
 		form.append(
-			fmt.Errorf("form value '%s' is required", key),
+			fmt.Errorf("form field '%s' is required", key),
 		)
 
 		return form
@@ -386,7 +473,7 @@ func (form *FormData) mustAssign(key, value string, target interface{}) *FormDat
 
 	if err != nil {
 		form.append(
-			fmt.Errorf("form value '%s' is invalid (got '%s', resulting to %w)", key, value, err),
+			fmt.Errorf("form field '%s' is invalid (got '%s', resulting to %w)", key, value, err),
 		)
 	}
 
@@ -426,7 +513,7 @@ func (form *FormData) mandatoryPath(filename string, target *string) *FormData {
 // readFile binds the content of a file to a string variable. It populates an
 // error if it fails to read the file content.
 func (form *FormData) readFile(path, filename string, target *string) *FormData {
-	b, err := ioutil.ReadFile(path)
+	b, err := os.ReadFile(path)
 	if err != nil {
 		form.append(
 			fmt.Errorf("form file '%s' is invalid (%w)", filename, err),
